@@ -81,7 +81,6 @@ def fetch_ips_with_selenium():
         try:
             WebDriverWait(driver, 30).until(
                 EC.presence_of_element_located((By.TAG_NAME, "table"))
-            )
             WebDriverWait(driver, 30).until(
                 lambda d: len(d.find_elements(By.TAG_NAME, "tr")) > 1
             )
@@ -290,10 +289,10 @@ def save_ips(ip_list):
     if server_port_pairs:
         with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
             for server, port, tag in server_port_pairs:
-                f.write(f"{server} {port}#{tag}\n")
-        logger.info(f"已将 {len(server_port_pairs)} 个 server:port 对写入 {OUTPUT_FILE}。")
+                f.write(f"{server}:{port}#{tag}\n")  # 修改为ip:端口#标签格式
+        logger.info(f"已将 {len(server_port_pairs)} 个 IP 地址写入 {OUTPUT_FILE}。")
     else:
-        logger.error("没有有效的 server:port 对可写入文件。")
+        logger.error("没有有效的 IP 地址可写入文件。")
 
 def main():
     test_ip = "8.8.8.8"
