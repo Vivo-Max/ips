@@ -1,34 +1,32 @@
-name: Scrape and Update IPs
+name: IP Scraper
+
 on:
   schedule:
-    - cron: '0 */6 * * *'  # 每6小时运行一次（可选定时任务）
-  workflow_dispatch:       # 允许手动触发
-  push:
-    branches:
-      - main              # 仅在 main 分支推送时忽略（避免循环触发）
+    - cron: '0 0 * * *'
+  workflow_dispatch:
 
 jobs:
-  scrape-and-push:
+  scrape:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write     # 关键：允许工作流推送更改
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # 获取完整 Git 历史（避免推送冲突）
+    - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.9'
 
-      - name: Install dependencies
-        run: |
-          pip install selenium beautifulsoup4 geoip2
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y wget
+        pip install selenium webdriver-manager beautifulsoup4 geoip2 requests
 
-      - name: Run scraper
+    - name: Run scraper
+      run: |
+        python scrape_ips.py || [ $(wc -l < ip.txt || echo 0) -ge 10 ]  # 至少10个IP才算成功
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         id: scrape
         run: |
           # 运行脚本，如果失败则检查 IP 数量是否≥10
