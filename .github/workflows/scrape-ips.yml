@@ -22,21 +22,18 @@ jobs:
       run: |
         pip install requests beautifulsoup4 geoip2 selenium
 
-    - name: Install Chrome and ChromeDriver
+    - name: Install Chrome and ChromeDriver (推荐方案)
+      uses: browser-actions/setup-chromedriver@v1
+      with:
+        chrome-version: 'latest'  # 自动匹配最新稳定版
+        # 或者指定已知兼容版本（示例）：
+        # chrome-version: '120.0.6099.109'
+        # chromedriver-version: '120.0.6099.109'
+
+    - name: Verify Chrome versions (调试用)
       run: |
-        sudo apt-get update
-        sudo apt-get install -y wget
-        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
-        sudo apt-get update
-        sudo apt-get install -y google-chrome-stable
-        google-chrome --version
-        CHROME_MAJOR_VERSION=$(google-chrome --version | grep -oP '\d+\.\d+\.\d+' | cut -d '.' -f 1)
-        CHROMEDRIVER_VERSION=$(curl -sS https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_MAJOR_VERSION)
-        wget -O /tmp/chromedriver.zip https://chromedriver.storage.googleapis.com/$CHROMEDRIVER_VERSION/chromedriver_linux64.zip
-        unzip /tmp/chromedriver.zip -d /usr/local/bin/
-        chmod +x /usr/local/bin/chromedriver
-        chromedriver --version
+        echo "Chrome版本: $(google-chrome --version)"
+        echo "ChromeDriver版本: $(chromedriver --version)"
 
     - name: Run script
       run: python scrape_ips.py
