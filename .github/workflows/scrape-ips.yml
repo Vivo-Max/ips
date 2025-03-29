@@ -33,21 +33,22 @@ jobs:
 
     - name: Install ChromeDriver
       run: |
-        # 获取 Chrome 的完整版本号（例如 134.0.6998.89）
+        # 获取 Chrome 的完整版本号（例如 134.0.6998.165）
         CHROME_FULL_VERSION=$(google-chrome --version | grep -oP '\d+\.\d+\.\d+\.\d+')
         echo "Chrome 完整版本: $CHROME_FULL_VERSION"
         # 获取 Chrome 的主版本号（例如 134.0.6998）
         CHROME_MAJOR_VERSION=$(echo $CHROME_FULL_VERSION | grep -oP '\d+\.\d+\.\d+')
         echo "Chrome 主版本: $CHROME_MAJOR_VERSION"
-        # 尝试获取与完整版本号匹配的 ChromeDriver 版本
-        CHROMEDRIVER_VERSION=$(curl -sS https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_FULL_VERSION || echo "")
-        if [ -z "$CHROMEDRIVER_VERSION" ]; then
-          echo "未找到与 Chrome $CHROME_FULL_VERSION 匹配的 ChromeDriver，尝试主版本 $CHROME_MAJOR_VERSION..."
-          CHROMEDRIVER_VERSION=$(curl -sS https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_MAJOR_VERSION || echo "")
+        # 优先使用主版本号查询 ChromeDriver 版本
+        CHROMEDRIVER_VERSION=$(curl -sS https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_MAJOR_VERSION)
+        # 检查 CHROMEDRIVER_VERSION 是否有效（不包含 XML 错误消息）
+        if echo "$CHROMEDRIVER_VERSION" | grep -q "NoSuchKey"; then
+          echo "未找到与 Chrome 主版本 $CHROME_MAJOR_VERSION 匹配的 ChromeDriver，尝试完整版本 $CHROME_FULL_VERSION..."
+          CHROMEDRIVER_VERSION=$(curl -sS https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_FULL_VERSION)
         fi
-        # 如果仍然未找到，使用一个已知的可用版本（例如 114.0.5735.90）
-        if [ -z "$CHROMEDRIVER_VERSION" ]; then
-          echo "未找到与 Chrome $CHROME_MAJOR_VERSION 匹配的 ChromeDriver，使用默认版本 114.0.5735.90..."
+        # 如果仍然无效，使用默认版本
+        if echo "$CHROMEDRIVER_VERSION" | grep -q "NoSuchKey" || [ -z "$CHROMEDRIVER_VERSION" ]; then
+          echo "未找到匹配的 ChromeDriver 版本，使用默认版本 114.0.5735.90..."
           CHROMEDRIVER_VERSION="114.0.5735.90"
         fi
         echo "ChromeDriver 版本: $CHROMEDRIVER_VERSION"
