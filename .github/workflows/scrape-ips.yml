@@ -1,10 +1,68 @@
-name: Test Workflow
+name: IP Scraper with Selenium
 
-on: [workflow_dispatch]
+on:
+  schedule:
+    - cron: '0 0 * * *'  # 每天 UTC 午夜运行
+  workflow_dispatch:     # 允许手动触发
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  scrape:
+    runs-on: ubuntu-22.04  # 使用更稳定的 Ubuntu 22.04
+
     steps:
-      - name: Hello World
-        run: echo "Workflow is running"
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # 获取完整 git 历史（用于后续提交）
+
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.9'
+        cache: 'pip'  # 启用 pip 缓存加速安装
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests beautifulsoup4 geoip2 selenium webdriver-manager
+
+    - name: Install Chrome (Stable)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y wget
+        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+        sudo apt-get update
+        sudo apt-get install -y google-chrome-stable
+        echo "Chrome version: $(google-chrome --version)"
+
+    - name: Setup Chromedriver (via webdriver-manager)
+      run: |
+        python -c "
+        from webdriver_manager.chrome import ChromeDriverManager
+        from selenium import webdriver
+        driver_path = ChromeDriverManager().install()
+        print(f'Chromedriver installed at: {driver_path}')
+        driver = webdriver.Chrome()
+        print('Selenium test passed!')
+        driver.quit()
+        "
+
+    - name: Run scraping script
+      run: python scrape_ips.py
+
+    - name: Upload IP list
+      uses: actions/upload-artifact@v4
+      with:
+        name: ip-list
+        path: ip.txt
+
+    - name: Commit and push results
+      run: |
+        git config --global user.name "GitHub Actions"
+        git config --global user.email "actions@github.com"
+        git add ip.txt
+        git commit -m "Auto-update IP list [skip ci]"
+        git push origin HEAD:${{ github.ref }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
