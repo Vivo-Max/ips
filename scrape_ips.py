@@ -5,12 +5,14 @@ import geoip2.database
 import os
 import logging
 import time
+import random
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from urllib.parse import urlparse
+from webdriver_manager.chrome import ChromeDriverManager
 
 # 配置日志
 logging.basicConfig(
@@ -33,7 +35,8 @@ HEADERS = {
 MAX_ROWS = 100
 MAX_RETRIES = 3
 MIN_IPS = 15
-REQUEST_TIMEOUT = 30
+REQUEST_TIMEOUT = 45  # 增加超时时间
+DELAY_RANGE = (1, 3)  # 随机延迟范围
 
 # 地区到国家代码映射
 REGION_TO_COUNTRY = {
@@ -42,47 +45,67 @@ REGION_TO_COUNTRY = {
 }
 
 def initialize_driver():
-    """初始化Selenium驱动"""
+    """初始化Selenium驱动（使用webdriver-manager自动管理驱动）"""
     options = Options()
     options.add_argument("--headless")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")
     options.add_argument(f"user-agent={HEADERS['User-Agent']}")
-    return webdriver.Chrome(options=options)
+    options.add_argument(f"--user-data-dir=/tmp/chrome-{time.time()}")  # 唯一用户目录
+    
+    # 使用webdriver-manager自动管理ChromeDriver
+    driver = webdriver.Chrome(ChromeDriverManager().install(), options=options)
+    return driver
 
 def is_valid_ip(ip):
-    """验证IP地址是否合法"""
+    """增强版IP验证"""
+    if not ip:
+        return False
     if ":" in ip:  # IPv6
         parts = ip.split(":")
-        return len(parts) == 8 and all(re.match(r"^[0-9a-fA-F]{1,4}$", p) for p in parts)
+        if len(parts) != 8:
+            return False
+        return all(re.match(r"^[0-9a-fA-F]{0,4}$", p) for p in parts)
     else:  # IPv4
         parts = ip.split(".")
-        return (len(parts) == 4 and 
-                all(p.isdigit() and 0 <= int(p) <= 255 for p in parts))
+        if len(parts) != 4:
+            return False
+        return all(p.isdigit() and 0 <= int(p) <= 255 for p in parts)
 
 def get_site_name(url):
     """从URL提取网站名称"""
-    domain = urlparse(url).netloc
-    return domain.split('.')[-2] if '.' in domain else domain
+    try:
+        domain = urlparse(url).netloc
+        return domain.split('.')[-2] if '.' in domain else domain
+    except:
+        return "unknown"
 
 def fetch_from_website(driver, url):
-    """从单个网站抓取IP"""
+    """从单个网站抓取IP（增强稳定性）"""
     site_name = get_site_name(url)
     logger.info(f"开始抓取 {site_name} ({url})")
     
     try:
+        # 随机延迟防止被ban
+        time.sleep(random.uniform(*DELAY_RANGE))
+        
         driver.get(url)
         WebDriverWait(driver, REQUEST_TIMEOUT).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "table, .table, [class*='table']"))
+            EC.presence_of_element_located((By.CSS_SELECTOR, "table, .table, [class*='table'], .ip-list"))
+        
+        # 添加DOM就绪检查
+        WebDriverWait(driver, 10).until(
+            lambda d: d.execute_script("return document.readyState") == "complete")
         
         soup = BeautifulSoup(driver.page_source, "html.parser")
         tables = soup.find_all("table")
         
         if not tables:
+            logger.info(f"{site_name} 未找到表格，尝试文本提取")
             return extract_ips_from_text(driver.page_source, site_name)
         
-        return parse_table_data(tables[0], site_name)  # 只处理第一个表格
+        return parse_table_data(tables[0], site_name)
     
     except Exception as e:
         logger.error(f"{site_name} 抓取失败: {str(e)[:200]}")
@@ -90,29 +113,33 @@ def fetch_from_website(driver, url):
         return None
 
 def extract_ips_from_text(content, site_name):
-    """从页面文本中提取IP"""
-    ip_pattern = r"\b(?:\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b"
+    """增强版文本IP提取"""
+    ip_pattern = r"(?:\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b|(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4})"
     ip_matches = re.findall(ip_pattern, content)
     
     if ip_matches:
-        logger.info(f"从 {site_name} 文本中找到 {len(ip_matches)} 个IP")
-        return [{
-            "ip_with_port": f"{ip}:443", 
-            "region": "UNKNOWN", 
-            "line_name": f"{site_name}-文本提取"
-        } for ip in ip_matches if is_valid_ip(ip)]
+        ips = []
+        for ip in ip_matches:
+            if is_valid_ip(ip):
+                ips.append({
+                    "ip_with_port": f"{ip}:443", 
+                    "region": "UNKNOWN", 
+                    "line_name": f"{site_name}-文本提取"
+                })
+        logger.info(f"从 {site_name} 文本中找到 {len(ips)} 个有效IP")
+        return ips
     
-    logger.warning(f"{site_name} 未找到IP地址")
+    logger.warning(f"{site_name} 未找到有效IP地址")
     return None
 
 def parse_table_data(table, site_name):
-    """解析表格数据"""
+    """增强版表格解析"""
     ip_list = []
     rows = table.find_all("tr")[1:]  # 跳过表头
     
     for row in rows[:MAX_ROWS]:
         cols = row.find_all("td")
-        if len(cols) < 2:  # 至少需要IP和地区两列
+        if len(cols) < 2:  # 最少需要IP列
             continue
 
         try:
@@ -120,94 +147,122 @@ def parse_table_data(table, site_name):
             if not is_valid_ip(ip):
                 continue
 
-            # 处理不同网站的不同列结构
-            region = cols[4].text.strip() if len(cols) > 4 else "Default"
-            line_name = cols[0].text.strip() if cols[0].text.strip() else f"{site_name}-线路"
+            # 动态列处理
+            region = (cols[4].text.strip() if len(cols) > 4 else 
+                     cols[3].text.strip() if len(cols) > 3 else "Default")
+            line_name = (cols[0].text.strip() or 
+                        f"{site_name}-线路-{len(ip_list)+1}")
+            
+            # 延迟检查（宽松处理）
+            latency = None
+            if len(cols) > 2:
+                try:
+                    latency = float(cols[2].text.replace("ms", "").strip())
+                    if latency > 1000:  # 宽松的延迟阈值
+                        continue
+                except:
+                    pass
             
             ip_list.append({
                 "ip_with_port": f"{ip}:443",
-                "region": region,
-                "line_name": line_name
+                "region": region[:20],  # 限制长度
+                "line_name": line_name[:30]
             })
 
         except Exception as e:
             logger.warning(f"解析行数据出错: {e}")
             continue
 
-    logger.info(f"从 {site_name} 表格中解析到 {len(ip_list)} 个IP")
+    logger.info(f"从 {site_name} 表格中解析到 {len(ip_list)} 个有效IP")
     return ip_list
 
 def fetch_all_ips():
-    """从所有网站抓取IP"""
-    driver = initialize_driver()
+    """从所有网站抓取IP（带重试和验证）"""
+    driver = None
     all_ips = []
     
     try:
-        for url in URLS.split(','):
-            url = url.strip()
-            if not url:
-                continue
+        driver = initialize_driver()
+        
+        for url in [u.strip() for u in URLS.split(",") if u.strip()]:
+            logger.info(f"处理URL: {url}")
+            
+            for attempt in range(1, MAX_RETRIES + 1):
+                try:
+                    ips = fetch_from_website(driver, url)
+                    if ips:
+                        all_ips.extend(ips)
+                        if len(ips) >= MIN_IPS / len(URLS.split(",")):
+                            break
+                    
+                    logger.warning(f"第 {attempt} 次尝试获取IP不足 ({len(ips) if ips else 0})")
+                    if attempt < MAX_RETRIES:
+                        time.sleep(attempt * 2)  # 递增延迟
                 
-            for attempt in range(MAX_RETRIES):
-                ips = fetch_from_website(driver, url)
-                if ips:
-                    all_ips.extend(ips)
-                    break
-                logger.warning(f"{url} 第 {attempt+1} 次尝试失败")
-                time.sleep(2)
+                except Exception as e:
+                    logger.error(f"尝试 {attempt} 失败: {str(e)[:200]}")
+                    if driver:
+                        driver.save_screenshot(f"retry_{attempt}.png")
     
     finally:
-        driver.quit()
+        if driver:
+            driver.quit()
     
     return all_ips if len(all_ips) >= MIN_IPS else None
 
-# [保持原有的get_country_code_from_db、get_country_code_from_api、get_country_code_from_region函数不变]
-
-def get_country_code(ip, region):
-    """获取国家代码（带缓存和回退）"""
-    country = get_country_code_from_db(ip)
-    if country != "UNKNOWN":
-        return country
-    
-    logger.info(f"GeoLite2查询失败，尝试API查询 {ip}...")
-    country = get_country_code_from_api(ip)
-    return country if country != "UNKNOWN" else get_country_code_from_region(region)
+# [保持原有的get_country_code系列函数不变]
 
 def save_ips(ip_list):
-    """保存IP列表（使用ip:端口#标签格式）"""
+    """保存IP列表（增强版去重和格式处理）"""
     if not ip_list:
         logger.error("没有有效的IP可保存")
         return
 
+    # 多维度去重
     unique_ips = []
-    seen = set()
+    seen_ips = set()
     
-    for entry in ip_list:
+    for entry in sorted(ip_list, key=lambda x: x["ip_with_port"]):
         ip_port = entry["ip_with_port"]
-        if ip_port not in seen:
-            seen.add(ip_port)
-            unique_ips.append(entry)
-
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        for entry in unique_ips:
-            ip, port = entry["ip_with_port"].split(":")
+        if ip_port not in seen_ips:
+            seen_ips.add(ip_port)
+            
+            # 处理国家代码
+            ip, port = ip_port.split(":")
             country = get_country_code(ip, entry["region"])
+            
+            # 格式化输出
             tag = f"{entry['line_name']}-{country}"
-            f.write(f"{ip}:{port}#{tag}\n")
+            unique_ips.append(f"{ip}:{port}#{tag}")
+
+    # 写入文件
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+        f.write("\n".join(unique_ips) + "\n")
     
     logger.info(f"成功保存 {len(unique_ips)} 个唯一IP到 {OUTPUT_FILE}")
 
 def main():
-    """主函数"""
-    logger.info(f"开始从 {URLS} 抓取IP列表...")
+    """主入口函数"""
+    try:
+        logger.info("="*50)
+        logger.info(f"开始抓取 {URLS} 的IP列表")
+        logger.info("="*50)
+        
+        ip_list = fetch_all_ips()
+        if not ip_list:
+            logger.error(f"未能获取足够IP (最少需要 {MIN_IPS} 个)")
+            return 1
+        
+        save_ips(ip_list)
+        return 0
     
-    ip_list = fetch_all_ips()
-    if not ip_list:
-        logger.error("未能获取足够数量的有效IP")
-        return
-
-    save_ips(ip_list)
-    logger.info("所有网站抓取完成")
+    except Exception as e:
+        logger.error(f"主程序错误: {str(e)}", exc_info=True)
+        return 1
+    finally:
+        logger.info("="*50)
+        logger.info("程序执行完毕")
+        logger.info("="*50)
 
 if __name__ == "__main__":
-    main()
+    exit(main())
