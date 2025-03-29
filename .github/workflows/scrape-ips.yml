@@ -2,8 +2,8 @@ name: Scrape IPs with Selenium
 
 on:
   schedule:
-    - cron: '0 0 * * *'  # 每天 UTC 时间 00:00 运行
-  workflow_dispatch:  # 允许手动触发
+    - cron: '0 0 * * *'
+  workflow_dispatch:
 
 jobs:
   scrape:
@@ -20,40 +20,14 @@ jobs:
 
     - name: Install Python dependencies
       run: |
-        python -m pip install --upgrade pip
         pip install requests beautifulsoup4 geoip2 selenium
 
-    - name: Install Google Chrome
+    - name: Install Chrome and ChromeDriver (Fixed Version)
       run: |
-        wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
         sudo apt-get update
-        sudo apt-get install -y google-chrome-stable
+        sudo apt-get install -y google-chrome-stable=114.0.5735.198-1
         google-chrome --version
-
-    - name: Install ChromeDriver
-      run: |
-        # 获取 Chrome 的完整版本号（例如 134.0.6998.165）
-        CHROME_FULL_VERSION=$(google-chrome --version | grep -oP '\d+\.\d+\.\d+\.\d+')
-        echo "Chrome 完整版本: $CHROME_FULL_VERSION"
-        # 获取 Chrome 的主版本号（例如 134.0.6998）
-        CHROME_MAJOR_VERSION=$(echo $CHROME_FULL_VERSION | grep -oP '\d+\.\d+\.\d+')
-        echo "Chrome 主版本: $CHROME_MAJOR_VERSION"
-        # 优先使用主版本号查询 ChromeDriver 版本
-        CHROMEDRIVER_VERSION=$(curl -sS https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_MAJOR_VERSION)
-        # 检查 CHROMEDRIVER_VERSION 是否有效（不包含 XML 错误消息）
-        if echo "$CHROMEDRIVER_VERSION" | grep -q "NoSuchKey"; then
-          echo "未找到与 Chrome 主版本 $CHROME_MAJOR_VERSION 匹配的 ChromeDriver，尝试完整版本 $CHROME_FULL_VERSION..."
-          CHROMEDRIVER_VERSION=$(curl -sS https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_FULL_VERSION)
-        fi
-        # 如果仍然无效，使用默认版本
-        if echo "$CHROMEDRIVER_VERSION" | grep -q "NoSuchKey" || [ -z "$CHROMEDRIVER_VERSION" ]; then
-          echo "未找到匹配的 ChromeDriver 版本，使用默认版本 114.0.5735.90..."
-          CHROMEDRIVER_VERSION="114.0.5735.90"
-        fi
-        echo "ChromeDriver 版本: $CHROMEDRIVER_VERSION"
-        # 下载 ChromeDriver
-        wget -O /tmp/chromedriver.zip https://chromedriver.storage.googleapis.com/$CHROMEDRIVER_VERSION/chromedriver_linux64.zip
+        wget -O /tmp/chromedriver.zip https://chromedriver.storage.googleapis.com/114.0.5735.90/chromedriver_linux64.zip
         unzip /tmp/chromedriver.zip -d /usr/local/bin/
         chmod +x /usr/local/bin/chromedriver
         chromedriver --version
@@ -67,7 +41,7 @@ jobs:
         name: ip-list
         path: ip.txt
 
-    - name: Commit and push ip.txt to repository
+    - name: Commit and push ip.txt
       run: |
         git config --global user.name "GitHub Action"
         git config --global user.email "action@github.com"
