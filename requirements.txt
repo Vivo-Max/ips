@@ -1,0 +1,4 @@
+requests
+beautifulsoup4
+geoip2
+selenium
