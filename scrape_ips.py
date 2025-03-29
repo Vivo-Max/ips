@@ -21,7 +21,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # 常量配置
-URLS = "https://cf.vvhan.com/,https://ip.ihuan.me/"  # 逗号分隔的多个目标网站
+URLS = "https://cf.vvhan.com/"  # 逗号分隔的多个目标网站
 OUTPUT_FILE = "ip.txt"
 GEOIP_DB_PATH = "GeoLite2-Country.mmdb"
 HEADERS = {
