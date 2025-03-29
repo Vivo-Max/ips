@@ -1,12 +1,13 @@
 name: IP Scraper
 
 on:
+  schedule:
+    - cron: '0 0 * * *'
   workflow_dispatch:
 
 jobs:
   scrape:
-    runs-on: ubuntu-22.04
-    
+    runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
 
@@ -18,21 +19,11 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y google-chrome-stable
-        pip install selenium webdriver-manager
-    - name: Verify Chrome
+        sudo apt-get install -y wget
+        pip install selenium webdriver-manager beautifulsoup4 geoip2 requests
+
+    - name: Run scraper
       run: |
-        python -c "
-        from selenium import webdriver
-        from selenium.webdriver.chrome.options import Options
-        options = Options()
-        options.add_argument('--headless')
-        options.add_argument('--no-sandbox')
-        options.add_argument('--disable-dev-shm-usage')
-        options.add_argument('--user-data-dir=/tmp/chrome-$(date +%s)')  # 动态唯一路径
-        driver = webdriver.Chrome(options=options)
-        print('✅ Chrome ready!')
-        driver.quit()
-        "
-    - name: Run script
-      run: python scrape_ips.py
+        python scrape_ips.py || [ $(wc -l < ip.txt || echo 0) -ge 10 ]  # 至少10个IP才算成功
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
