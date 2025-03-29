@@ -1,45 +1,40 @@
 name: IP Scraper
 
-on: 
-  schedule: 
-    - cron: '0 0 * * *'
+on:
   workflow_dispatch:
-
-permissions:
-  contents: write  # 最小化权限控制
 
 jobs:
   scrape:
     runs-on: ubuntu-22.04
+    
     steps:
-      - uses: actions/checkout@v4
+    - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with: 
-          python-version: "3.9"
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.9'
 
-      - name: Install Stack
-        run: |
-          sudo apt-get install -y google-chrome-stable
-          pip install requests beautifulsoup4 selenium webdriver-manager
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y google-chrome-stable
+        pip install selenium webdriver-manager
 
-      - name: Verify Chrome
-        run: |
-          python -c "
-          from selenium import webdriver
-          from selenium.webdriver.chrome.options import Options
-          options = Options()
-          options.add_argument('--headless --no-sandbox --disable-dev-shm-usage')
-          webdriver.Chrome(options=options).quit()
-          print('✓ Chrome ready')
-          "
+    - name: Verify Chrome
+      run: |
+        python -c "
+        from selenium import webdriver
+        from selenium.webdriver.chrome.options import Options
+        options = Options()
+        options.add_argument('--headless')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--user-data-dir=/tmp/chrome-$(date +%s)')  # 动态唯一路径
+        driver = webdriver.Chrome(options=options)
+        print('✅ Chrome ready!')
+        driver.quit()
+        "
 
-      - name: Scrape & Commit
-        run: |
-          python scrape_ips.py
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "actions@github.com"
-          git add ip.txt && git commit -m "Update IPs" && git push
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Run script
+      run: python scrape_ips.py
