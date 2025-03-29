@@ -1,55 +1,10 @@
-name: Scrape IPs with Selenium
+name: Test Workflow
 
-on:
-  schedule:
-    - cron: '0 0 * * *'
-  workflow_dispatch:
+on: [workflow_dispatch]
 
 jobs:
-  scrape:
+  test:
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.9'
-
-    - name: Install Python dependencies
-      run: |
-        pip install requests beautifulsoup4 geoip2 selenium
-
-    - name: Install Chrome and ChromeDriver (推荐方案)
-      uses: browser-actions/setup-chromedriver@v1
-      with:
-        chrome-version: 'latest'  # 自动匹配最新稳定版
-        # 或者指定已知兼容版本（示例）：
-        # chrome-version: '120.0.6099.109'
-        # chromedriver-version: '120.0.6099.109'
-
-    - name: Verify Chrome versions (调试用)
-      run: |
-        echo "Chrome版本: $(google-chrome --version)"
-        echo "ChromeDriver版本: $(chromedriver --version)"
-
-    - name: Run script
-      run: python scrape_ips.py
-
-    - name: Upload ip.txt as artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: ip-list
-        path: ip.txt
-
-    - name: Commit and push ip.txt
-      run: |
-        git config --global user.name "GitHub Action"
-        git config --global user.email "action@github.com"
-        git add ip.txt
-        git commit -m "Update ip.txt with latest IPs"
-        git push
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Hello World
+        run: echo "Workflow is running"
