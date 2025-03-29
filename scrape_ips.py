@@ -56,15 +56,19 @@ def fetch_ips():
         driver.get(URL)
         
         # 关键修复：正确的等待语法
-        try:
-            WebDriverWait(driver, REQUEST_TIMEOUT).until(
-                EC.presence_of_element_located((By.TAG_NAME, "table"))
-            WebDriverWait(driver, 10).until(
-                lambda d: len(d.find_elements(By.TAG_NAME, "tr")) > 1
-            )
-        except Exception as e:
-            logger.error(f"等待元素超时: {e}")
-            return None
+    try:
+        # 等待表格加载完成
+        WebDriverWait(driver, REQUEST_TIMEOUT).until(
+            EC.presence_of_element_located((By.TAG_NAME, "table"))
+        )
+    
+        # 检查表格中是否有足够的数据行（可选）
+        WebDriverWait(driver, 10).until(
+            lambda d: len(d.find_elements(By.TAG_NAME, "tr")) > 1
+        )
+    except Exception as e:
+        logger.error(f"等待元素超时: {e}")
+        return None
 
         # 页面解析逻辑（保持原有代码不变）
         soup = BeautifulSoup(driver.page_source, "html.parser")
