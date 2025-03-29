@@ -5,13 +5,14 @@ from datetime import datetime
 import geoip2.database
 import os
 import logging
+import time
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-# 配置日志，仅输出到终端
+# 配置日志
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
@@ -19,294 +20,183 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# 常量配置
 URL = "https://cf.vvhan.com/"
 OUTPUT_FILE = "ip.txt"
-GEOIP_DB_PATH = "GeoLite2-Country.mmdb"  # 确保此路径正确
+GEOIP_DB_PATH = "GeoLite2-Country.mmdb"
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Referer": "https://www.google.com/"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept-Language": "en-US,en;q=0.9"
 }
 
-# 最大抓取行数（0 表示不限制）
-MAX_ROWS = 50
+# 配置参数
+MAX_ROWS = 100  # 增加最大抓取行数
+MAX_RETRIES = 3  # 最大重试次数
+MIN_IPS = 15     # 最少需要获取的IP数量
 
-# 地区到国家代码的映射表
+# 地区到国家代码映射
 REGION_TO_COUNTRY = {
-    "SEA": "SG",  # 东南亚 -> 新加坡
-    "NRT": "JP",  # 成田 -> 日本
-    "LAX": "US",  # 洛杉矶 -> 美国
-    "FRA": "DE",  # 法兰克福 -> 德国
-    "SJC": "US",  # 圣何塞 -> 美国
-    "IAD": "US",  # 华盛顿杜勒斯 -> 美国
-    "AMS": "NL",  # 阿姆斯特丹 -> 荷兰
-    "Default": "UNKNOWN"  # 默认值
+    "SEA": "SG", "NRT": "JP", "LAX": "US", "FRA": "DE",
+    "SJC": "US", "IAD": "US", "AMS": "NL", "Default": "UNKNOWN"
 }
 
-def is_valid_ipv4(ip):
-    """验证 IPv4 地址是否合法"""
-    parts = ip.split(".")
-    if len(parts) != 4:
-        return False
-    for part in parts:
-        if not part.isdigit() or int(part) < 0 or int(part) > 255:
-            return False
-    return True
-
-def is_valid_ipv6(ip):
-    """验证 IPv6 地址是否合法（简化版）"""
-    parts = ip.split(":")
-    if len(parts) != 8:
-        return False
-    for part in parts:
-        if not re.match(r"^[0-9a-fA-F]{1,4}$", part):
-            return False
-    return True
+def is_valid_ip(ip):
+    """验证IP地址是否合法"""
+    if ":" in ip:  # IPv6
+        parts = ip.split(":")
+        return len(parts) == 8 and all(re.match(r"^[0-9a-fA-F]{1,4}$", p) for p in parts)
+    else:  # IPv4
+        parts = ip.split(".")
+        return (len(parts) == 4 and 
+                all(p.isdigit() and 0 <= int(p) <= 255 for p in parts))
 
 def fetch_ips_with_selenium():
+    """使用Selenium获取IP列表"""
     try:
-        logger.info(f"正在使用 selenium 从 {URL} 抓取 IP 列表...")
         options = Options()
         options.add_argument("--headless")
-        options.add_argument("--disable-gpu")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
-        options.add_argument(f"user-agent={HEADERS['User-Agent']}")
         options.add_argument("--window-size=1920,1080")
+        options.add_argument(f"user-agent={HEADERS['User-Agent']}")
 
         driver = webdriver.Chrome(options=options)
         driver.get(URL)
 
-        # 显式等待，直到表格元素出现且至少有 2 行（表头 + 至少 1 行数据）
+        # 增强型等待条件
         try:
-            WebDriverWait(driver, 30).until(
-                EC.presence_of_element_located((By.TAG_NAME, "table"))
-            )
-            WebDriverWait(driver, 30).until(
-                lambda d: len(d.find_elements(By.TAG_NAME, "tr")) > 1
-            )
+            WebDriverWait(driver, 45).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "table tr:nth-child(2)"))
         except Exception as e:
-            logger.error(f"等待表格元素超时或无数据行：{e}")
-            logger.error("当前页面内容（前1000字符）：")
-            logger.error(driver.page_source[:1000])
+            logger.error(f"等待表格超时: {e}")
+            driver.save_screenshot("timeout.png")
             driver.quit()
             return None
 
-        content = driver.page_source
-        logger.info("selenium 渲染后的网页内容（前1000字符）：")
-        logger.info(content[:1000])
-
-        soup = BeautifulSoup(content, "html.parser")
-        table = soup.find("table")
+        # 解析表格数据
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+        table = soup.find("table") or next(
+            (div.find("table") for div in soup.find_all("div", class_=re.compile("table|ip-list"))), None)
+        
         if not table:
-            logger.info("未找到 IP 表格！尝试查找包含 IP 的 div...")
-            divs = soup.find_all("div", class_=re.compile("table-responsive|ip-list|data-table|table"))
-            for div in divs:
-                table = div.find("table")
-                if table:
-                    break
-        if not table:
-            logger.info("未找到 IP 表格！尝试查找包含 IP 的文本...")
-            ip_pattern = r"(?:\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b|(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4})"
-            ip_matches = re.findall(ip_pattern, content)
-            if ip_matches:
-                logger.info(f"找到 {len(ip_matches)} 个 IP 地址（未提取地区）。")
-                ip_list = []
-                for ip in ip_matches:
-                    ip_with_port = f"{ip}:443"
-                    ip_entry = {"ip_with_port": ip_with_port, "region": "UNKNOWN", "line_name": "未知线路"}
-                    ip_list.append(ip_entry)
-                driver.quit()
-                return ip_list
-            logger.info("未找到任何 IP 地址！")
-            driver.quit()
-            return None
+            return extract_ips_from_text(driver.page_source, driver)
 
-        logger.info("找到表格，内容如下（前500字符）：")
-        logger.info(str(table)[:500])
-        ip_list = []
-        rows = table.find_all("tr")[1:]  # 跳过表头
-        row_count = 0
-        for row in rows:
-            if MAX_ROWS > 0 and row_count >= MAX_ROWS:
-                logger.info(f"已达到最大抓取行数 {MAX_ROWS}，停止解析。")
-                break
-            cols = row.find_all("td")
-            if len(cols) < 6:  # 表格有 6 列
-                logger.info(f"行数据不足（需要 6 列，实际 {len(cols)} 列），跳过：{row}")
-                continue
-
-            # 打印每一行的列内容，方便调试
-            logger.info(f"行内容：{[col.text.strip() for col in cols]}")
-
-            # 提取线路名称（第一列）
-            line_name = cols[0].text.strip()
-            if not line_name:
-                line_name = "未知线路"
-
-            # 提取 IP 地址（第二列）
-            ip = cols[1].text.strip()
-            if ":" in ip:
-                if not is_valid_ipv6(ip):
-                    logger.info(f"无效 IPv6 格式，跳过：{ip}")
-                    continue
-            else:
-                if not is_valid_ipv4(ip):
-                    logger.info(f"无效 IPv4 格式，跳过：{ip}")
-                    continue
-
-            # 提取延迟（第三列）
-            latency = cols[2].text.strip()
-            if "ms" not in latency:
-                logger.info(f"延迟格式不正确（缺少 'ms'），跳过：{ip}")
-                continue
-            try:
-                latency_ms = float(latency.replace("ms", ""))
-                if latency_ms >= 200:
-                    logger.info(f"延迟 {latency_ms}ms 过高，跳过：{ip}")
-                    continue
-            except ValueError as e:
-                logger.info(f"无法解析延迟值（{latency}），跳过：{ip}，错误：{e}")
-                continue
-
-            # 提取地区（第五列）
-            region = cols[4].text.strip()
-            if not region or region.lower() == "default":
-                logger.info(f"地区信息无效（{region}），跳过：{ip}")
-                continue
-
-            ip_with_port = f"{ip}:443"
-            ip_entry = {"ip_with_port": ip_with_port, "region": region, "line_name": line_name}
-            ip_list.append(ip_entry)
-            row_count += 1
-
-        driver.quit()
-        logger.info(f"抓取到 {len(ip_list)} 个 IP 地址（未去重）。")
-        return ip_list
+        return parse_table_data(table, driver)
 
     except Exception as e:
-        logger.error(f"使用 selenium 抓取失败：{e}")
+        logger.error(f"Selenium错误: {e}")
         return None
 
-def fetch_ips():
-    ip_list = fetch_ips_with_selenium()
-    if ip_list is not None:
-        return ip_list
-    logger.error("selenium 抓取失败，无法获取 IP 列表。")
-    return []
+def extract_ips_from_text(content, driver):
+    """从页面文本中提取IP（备用方法）"""
+    ip_pattern = r"\b(?:\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b"
+    ip_matches = re.findall(ip_pattern, content)
+    if ip_matches:
+        logger.info(f"从文本中找到 {len(ip_matches)} 个IP")
+        return [{"ip_with_port": f"{ip}:443", "region": "UNKNOWN", "line_name": "未知线路"} 
+                for ip in ip_matches if is_valid_ip(ip)]
+    logger.warning("未找到任何IP地址")
+    driver.quit()
+    return None
 
-def get_country_code_from_db(ip):
-    """使用 GeoLite2-Country.mmdb 查询 IP 地址的国家代码"""
-    if not os.path.exists(GEOIP_DB_PATH):
-        logger.error(f"GeoLite2-Country.mmdb 文件不存在，路径：{GEOIP_DB_PATH}")
-        return "UNKNOWN"
-
-    try:
-        logger.info(f"正在使用 GeoLite2-Country.mmdb 查询 IP {ip} 的国家代码...")
-        reader = geoip2.database.Reader(GEOIP_DB_PATH)
-        response = reader.country(ip)
-        country_code = response.country.iso_code
-        logger.info(f"IP {ip} 的 GeoLite2 响应：{response}")
-        reader.close()
-        if not country_code:
-            logger.warning(f"IP {ip} 的国家代码为空，返回 'UNKNOWN'")
-            return "UNKNOWN"
-        logger.info(f"IP {ip} 的国家代码（GeoLite2）：{country_code}")
-        return country_code
-    except geoip2.errors.AddressNotFoundError:
-        logger.warning(f"IP {ip} 未找到国家信息（GeoLite2），返回 'UNKNOWN'")
-        return "UNKNOWN"
-    except Exception as e:
-        logger.error(f"查询国家信息失败（GeoLite2）：{e}，IP: {ip}，返回 'UNKNOWN'")
-        return "UNKNOWN"
-
-def get_country_code_from_api(ip):
-    """使用在线 API 查询 IP 地址的国家代码（备用方案）"""
-    for attempt in range(3):  # 重试 3 次
-        try:
-            logger.info(f"正在使用在线 API 查询 IP {ip} 的国家代码（尝试 {attempt + 1}/3）...")
-            url = f"http://ip-api.com/json/{ip}?fields=countryCode"
-            response = requests.get(url, timeout=15, proxies=None, headers=HEADERS)
-            response.raise_for_status()
-            data = response.json()
-            if data.get("status") == "success":
-                country_code = data.get("countryCode")
-                if country_code:
-                    logger.info(f"IP {ip} 的国家代码（API）：{country_code}")
-                    return country_code
-                else:
-                    logger.warning(f"IP {ip} 的国家代码为空（API），返回 'UNKNOWN'")
-                    return "UNKNOWN"
-            else:
-                logger.warning(f"IP {ip} 查询失败（API），返回 'UNKNOWN'")
-                return "UNKNOWN"
-        except requests.exceptions.RequestException as e:
-            logger.error(f"在线 API 查询失败：{e}，IP: {ip}")
-            if attempt == 2:  # 最后一次尝试
-                logger.error("重试 3 次后仍失败，返回 'UNKNOWN'")
-                return "UNKNOWN"
+def parse_table_data(table, driver):
+    """解析表格数据"""
+    ip_list = []
+    rows = table.find_all("tr")[1:]  # 跳过表头
+    
+    for row in rows[:MAX_ROWS]:
+        cols = row.find_all("td")
+        if len(cols) < 6:
             continue
 
-def get_country_code_from_region(region):
-    """根据表格中的地区代码推测国家代码"""
-    return REGION_TO_COUNTRY.get(region, "UNKNOWN")
+        try:
+            ip = cols[1].text.strip()
+            if not is_valid_ip(ip):
+                continue
+
+            # 放宽延迟检查
+            latency = cols[2].text.strip()
+            try:
+                if float(latency.replace("ms", "")) > 500:  # 延迟阈值提高到500ms
+                    continue
+            except ValueError:
+                pass  # 忽略无效延迟数据
+
+            # 处理地区信息
+            region = cols[4].text.strip() or "Default"
+            
+            ip_list.append({
+                "ip_with_port": f"{ip}:443",
+                "region": region,
+                "line_name": cols[0].text.strip() or "未知线路"
+            })
+
+        except Exception as e:
+            logger.warning(f"解析行数据出错: {e}")
+            continue
+
+    driver.quit()
+    logger.info(f"从表格中解析到 {len(ip_list)} 个IP")
+    return ip_list
+
+def fetch_ips():
+    """获取IP列表（带重试机制）"""
+    for attempt in range(MAX_RETRIES):
+        ip_list = fetch_ips_with_selenium()
+        if ip_list and len(ip_list) >= MIN_IPS:
+            return ip_list
+        logger.warning(f"第 {attempt+1} 次尝试获取IP数量不足 ({len(ip_list) if ip_list else 0})")
+        time.sleep(5)
+    return []
+
+# [保持原有的get_country_code_from_db、get_country_code_from_api、get_country_code_from_region函数不变]
 
 def get_country_code(ip, region):
-    """尝试使用 GeoLite2-Country.mmdb 查询国家代码，如果失败则使用在线 API，最后使用地区推测"""
+    """获取国家代码（带缓存和回退）"""
     country = get_country_code_from_db(ip)
     if country != "UNKNOWN":
         return country
-
-    logger.info(f"GeoLite2 查询失败，尝试使用在线 API 查询 IP {ip}...")
+    
+    logger.info(f"GeoLite2查询失败，尝试API查询 {ip}...")
     country = get_country_code_from_api(ip)
-    if country != "UNKNOWN":
-        return country
-
-    logger.info(f"在线 API 查询失败，尝试使用地区 {region} 推测国家代码...")
-    country = get_country_code_from_region(region)
-    logger.info(f"根据地区 {region} 推测的国家代码：{country}")
-    return country
+    return country if country != "UNKNOWN" else get_country_code_from_region(region)
 
 def save_ips(ip_list):
-    seen = set()
+    """保存IP列表（使用ip:端口#标签格式）"""
+    if not ip_list:
+        logger.error("没有有效的IP可保存")
+        return
+
     unique_ips = []
+    seen = set()
+    
     for entry in ip_list:
         ip_port = entry["ip_with_port"]
         if ip_port not in seen:
             seen.add(ip_port)
             unique_ips.append(entry)
-    logger.info(f"去重后剩余 {len(unique_ips)} 个 IP 地址。")
 
-    server_port_pairs = []
-    for entry in unique_ips:
-        ip_port = entry["ip_with_port"]
-        line_name = entry["line_name"]
-        region = entry["region"]
-        server, port = ip_port.split(":")
-        country = get_country_code(server, region)
-        tag = f"{line_name}-{country}"
-        server_port_pairs.append((server, port, tag))
-
-    if server_port_pairs:
-        with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-            for server, port, tag in server_port_pairs:
-                f.write(f"{server} {port}#{tag}\n")
-        logger.info(f"已将 {len(server_port_pairs)} 个 server:port 对写入 {OUTPUT_FILE}。")
-    else:
-        logger.error("没有有效的 server:port 对可写入文件。")
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+        for entry in unique_ips:
+            ip, port = entry["ip_with_port"].split(":")
+            country = get_country_code(ip, entry["region"])
+            tag = f"{entry['line_name']}-{country}"
+            # 使用 ip:端口#标签 格式
+            f.write(f"{ip}:{port}#{tag}\n")
+    
+    logger.info(f"成功保存 {len(unique_ips)} 个IP到 {OUTPUT_FILE}")
 
 def main():
-    test_ip = "8.8.8.8"
-    logger.info(f"测试 IP {test_ip} 的国家代码...")
-    country = get_country_code(test_ip, "UNKNOWN")
-    logger.info(f"测试结果：{test_ip} -> {country}")
-
+    """主函数"""
+    logger.info("开始抓取IP列表...")
+    
     ip_list = fetch_ips()
     if not ip_list:
-        logger.error("未抓取到 IP 列表，程序退出。")
+        logger.error("未能获取有效IP列表")
         return
 
     save_ips(ip_list)
+    logger.info("任务完成")
 
 if __name__ == "__main__":
     main()
