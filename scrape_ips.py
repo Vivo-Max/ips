@@ -11,7 +11,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# CSV 数据源
 CSV_URL = "https://bihai.cf/CFIP/CUCC/standard.csv"
 OUTPUT_FILE = "ip.txt"
 HEADERS = {
@@ -20,36 +19,41 @@ HEADERS = {
     "Referer": "https://www.google.com/"
 }
 
-# 亚太地区国家/地区代码（不包含CN）
 ASIA_PACIFIC_REGIONS = {
     'JP', 'KR', 'SG', 'TW', 'HK', 'MY', 'TH', 'ID', 'PH',
     'VN', 'IN', 'AU', 'NZ', 'MO', 'BN', 'KH', 'LA', 'MM', 'TL'
 }
 
-MAX_NODES = 100  # 获取前100个节点
+MAX_NODES = 100
 
 def fetch_csv_data():
-    """从CSV URL获取数据"""
     try:
         logger.info(f"正在从 {CSV_URL} 获取数据...")
         response = requests.get(CSV_URL, headers=HEADERS, timeout=30)
         response.raise_for_status()
+        logger.info("成功获取CSV数据")
         return response.text
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
         logger.error(f"获取CSV数据失败: {e}")
         return None
 
 def parse_csv_and_sort(data):
-    """解析CSV并按延迟排序，返回亚太地区节点（不含CN）"""
     try:
         f = StringIO(data)
-        reader = csv.DictReader(f, delimiter='\t')  # 假设CSV以制表符分隔
+        reader = csv.DictReader(f, delimiter='\t')
+        
+        # 调试：打印字段名
+        logger.info(f"CSV字段名: {reader.fieldnames}")
         
         nodes = []
         for row in reader:
             try:
+                # 调试：打印每行数据
+                logger.debug(f"处理行: {row}")
+                
                 ip = row['国际代码'].strip()
-                port = row['443'].strip()  # 假设端口字段名为 '443'
+                # 假设端口字段名为 '端口'，如果不同请根据日志调整
+                port = row.get('端口', '443').strip()  # 默认443，如果字段缺失
                 country = row['国家'].strip().upper()
                 delay_str = row['网络延迟'].strip()
                 delay = float(delay_str.replace(' ms', ''))
@@ -57,11 +61,14 @@ def parse_csv_and_sort(data):
                 if country in ASIA_PACIFIC_REGIONS:
                     remark = f"{ip}:{port}#{country}"
                     nodes.append((delay, remark))
-            except (ValueError, KeyError) as e:
+            except KeyError as e:
+                logger.error(f"字段缺失: {e}")
+                continue
+            except ValueError as e:
+                logger.error(f"数据格式错误: {e}")
                 continue
 
-        # 按延迟排序并取前MAX_NODES个
-        nodes.sort(key=lambda x: x[0])  # 按延迟升序排序
+        nodes.sort(key=lambda x: x[0])
         return [node[1] for node in nodes[:MAX_NODES]]
 
     except Exception as e:
@@ -69,7 +76,6 @@ def parse_csv_and_sort(data):
         return []
 
 def save_ips(ip_list):
-    """保存IP列表到文件"""
     with open(OUTPUT_FILE, "w") as f:
         for ip in ip_list:
             f.write(f"{ip}\n")
