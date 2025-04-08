@@ -22,7 +22,6 @@ HEADERS = {
     "Referer": "https://www.google.com/"
 }
 
-# 亚太地区国家/地区代码（不包含 CN）
 ASIA_PACIFIC_REGIONS = {
     'JP', 'KR', 'SG', 'TW', 'HK', 'MY', 'TH', 'ID', 'PH',
     'VN', 'IN', 'AU', 'NZ', 'MO', 'BN', 'KH', 'LA', 'MM', 'TL'
@@ -31,7 +30,6 @@ ASIA_PACIFIC_REGIONS = {
 MAX_NODES = 100
 
 def fetch_csv_data(url: str) -> str:
-    """从 URL 获取数据，支持重试"""
     try:
         logger.info(f"正在从 {url} 获取数据...")
         session = requests.Session()
@@ -46,11 +44,9 @@ def fetch_csv_data(url: str) -> str:
         return None
 
 def is_ip(s: str) -> bool:
-    """检查是否为有效的 IPv4 地址"""
     return bool(re.match(r"^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$", s))
 
 def is_port(s: str) -> bool:
-    """检查是否为有效的端口号"""
     try:
         port = int(s)
         return 1 <= port <= 65535
@@ -58,20 +54,17 @@ def is_port(s: str) -> bool:
         return False
 
 def is_delay(s: str) -> bool:
-    """检查是否为延迟值（如 '51 ms' 或 '51'）"""
     return bool(re.match(r"^\d+(\.\d+)?\s*ms$", s)) or s.isdigit()
 
 def parse_csv_and_sort(data: str):
-    """通用解析 CSV，支持任意格式"""
     try:
         f = StringIO(data)
-        # 检测分隔符
         delimiters = [',', '\t', ';']
         for delimiter in delimiters:
             f.seek(0)
             reader = csv.reader(f, delimiter=delimiter)
             rows = list(reader)
-            if len(rows) > 1 and len(rows[0]) > 1:  # 确保有数据且分隔有效
+            if len(rows) > 1 and len(rows[0]) > 1:
                 break
         else:
             logger.error("无法确定CSV分隔符")
@@ -94,24 +87,24 @@ def parse_csv_and_sort(data: str):
             elif 'delay' in field_lower or '延迟' in field_lower:
                 delay_col = i
 
-        # 如果未找到关键字段，尝试从数据推测
-        if not all([ip_col, port_col, country_col]):
-            sample_row = data_rows[0] if data_rows else []
-            for i, value in enumerate(sample_row):
-                if is_ip(value) and ip_col is None:
-                    ip_col = i
-                elif is_port(value) and port_col is None:
-                    port_col = i
-                elif len(value.strip()) == 2 and value.strip().upper() in ASIA_PACIFIC_REGIONS and country_col is None:
-                    country_col = i
-                elif is_delay(value) and delay_col is None:
-                    delay_col = i
+        # 从数据推测，确保准确性
+        sample_row = data_rows[0] if data_rows else []
+        for i, value in enumerate(sample_row):
+            value = value.strip()
+            if is_ip(value) and ip_col is None:
+                ip_col = i
+            elif is_port(value) and port_col is None:
+                port_col = i
+            elif value.upper() in ASIA_PACIFIC_REGIONS and country_col is None:
+                country_col = i
+            elif is_delay(value) and delay_col is None:
+                delay_col = i
 
         if not all([ip_col, port_col, country_col]):
             logger.error("无法推测IP、端口或国家字段位置")
             return []
 
-        logger.info(f"推测字段位置 - IP: {ip_col}, Port: {port_col}, Country: {country_col}, Delay: {delay_col}")
+        logger.info(f"最终字段位置 - IP: {ip_col}, Port: {port_col}, Country: {country_col}, Delay: {delay_col}")
 
         nodes = []
         for row in data_rows:
@@ -124,14 +117,14 @@ def parse_csv_and_sort(data: str):
 
                 port = row[port_col].strip()
                 if not is_port(port):
-                    port = "443"  # 默认端口
+                    port = "443"
                 port = int(port)
 
                 country = row[country_col].strip().upper()
                 if country not in ASIA_PACIFIC_REGIONS:
                     continue
 
-                delay = 9999  # 默认延迟
+                delay = 9999
                 if delay_col is not None and row[delay_col].strip():
                     delay_str = row[delay_col].strip()
                     if is_delay(delay_str):
@@ -143,7 +136,7 @@ def parse_csv_and_sort(data: str):
                 logger.debug(f"跳过无效行: {row} - {e}")
                 continue
 
-        nodes.sort(key=lambda x: x[0])  # 按延迟排序
+        nodes.sort(key=lambda x: x[0])
         return [node[1] for node in nodes[:MAX_NODES]]
 
     except Exception as e:
@@ -151,7 +144,6 @@ def parse_csv_and_sort(data: str):
         return []
 
 def save_ips(ip_list):
-    """保存IP列表到文件"""
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         for ip in ip_list:
             f.write(f"{ip}\n")
