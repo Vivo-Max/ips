@@ -143,4 +143,27 @@ def parse_csv_and_sort(data: str):
                 logger.debug(f"跳过无效行: {row} - {e}")
                 continue
 
-        nodes.sor
+        nodes.sort(key=lambda x: x[0])  # 按延迟排序
+        return [node[1] for node in nodes[:MAX_NODES]]
+
+    except Exception as e:
+        logger.error(f"解析CSV失败: {e}")
+        return []
+
+def save_ips(ip_list):
+    """保存IP列表到文件"""
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+        for ip in ip_list:
+            f.write(f"{ip}\n")
+    logger.info(f"已保存 {len(ip_list)} 个节点到 {OUTPUT_FILE}")
+
+if __name__ == "__main__":
+    csv_data = fetch_csv_data(CSV_URL)
+    if csv_data:
+        ip_list = parse_csv_and_sort(csv_data)
+        if ip_list:
+            save_ips(ip_list)
+        else:
+            logger.error("未解析到有效的亚太地区节点！")
+    else:
+        logger.error("未能获取CSV数据！")
