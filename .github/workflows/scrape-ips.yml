@@ -23,21 +23,23 @@ jobs:
         with:
           python-version: '3.9'
 
-      # 3. 安装系统依赖和 Python 包
+      # 3. 安装依赖
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y wget
-          pip install selenium webdriver-manager beautifulsoup4 geoip2 requests
+          pip install requests
 
       # 4. 运行爬虫脚本
       - name: Run scraper
-        id: scrape  # 注意：id 应该与 step 同级，不是 env 的子项
+        id: scrape
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python scrape_ips.py || [ $(wc -l < ip.txt || echo 0) -ge 10 ]
-          echo "IP_COUNT=$(wc -l < ip.txt | xargs)" >> $GITHUB_OUTPUT
+          python3 scrape_ips.py || [ $(wc -l < ip.txt || echo 0) -ge 10 ]
+          IP_COUNT=$(wc -l < ip.txt | xargs)
+          echo "IP_COUNT=$IP_COUNT" >> $GITHUB_OUTPUT
+          echo "Generated IP count: $IP_COUNT"
 
       # 5. 条件推送（仅当 IP≥10 时）
       - name: Commit and push changes
