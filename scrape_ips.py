@@ -81,7 +81,6 @@ def parse_csv_and_sort(data: str):
         data_rows = rows[1:]
         logger.info(f"CSV字段数: {len(header)}, 示例行: {data_rows[0] if data_rows else '无数据'}")
 
-        # 固定字段位置，基于示例数据
         ip_col = 0      # IP 地址
         port_col = 1    # 端口
         country_col = 5 # 国家代码 (TW, JP 等)
